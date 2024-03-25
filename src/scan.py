@@ -4,7 +4,21 @@ from services.azure_storage import get_blob_as_bytes
 from azure.storage.blob import BlobServiceClient
 
 import os
+from PIL import Image, ImageDraw, ImageFont
 
+"""
+USE:
+This app is designed to mark scans, that:
+    - have a double label match per study
+    - have identical comments in annotation_bboxes
+"""
+
+diagnoses_dict = {
+  "has_malign_mass":"Mal. Mass",
+  "has_benign_mass":"Ben. Mass",
+  "has_benign_microcalsifications":"Ben. Calc",
+  "has_malign_microcalcifications":"Mal. Calc"
+}
 
 @dataclass
 class ScanMetadata:
@@ -13,7 +27,7 @@ class ScanMetadata:
     single scan.
     """
     id: str
-    annotation_bboxes: str
+    annotation_bboxes: list
 
 def get_scans_metadata_with_double_match(annotation: str) -> list[ScanMetadata]:
     """
@@ -38,11 +52,15 @@ def get_scans_metadata_with_double_match(annotation: str) -> list[ScanMetadata]:
     unique_ids = set()
     scans_metadata = []
 
+    annotations = []  # init list for annotations outside the loop
+
     for row in results:
         mmg_scan_id = row[1]
         if mmg_scan_id not in unique_ids:
             unique_ids.add(mmg_scan_id)
-            scans_metadata.append(ScanMetadata(id=mmg_scan_id, annotation_bboxes=row[2]))
+            annotations = []  # clear the list for each new mmg_scan_id
+            scans_metadata.append(ScanMetadata(id=mmg_scan_id, annotation_bboxes=annotations))
+        annotations.append(row[2])
 
     return scans_metadata
 
@@ -73,7 +91,7 @@ def download_scan_png(scan_metadata: ScanMetadata) -> None:
         raise ValueError("`PNG_DIR` environment variable is not set.")
     
     try:
-        # TODO: catching errors
+        # TODO: Network errors, missing files
         blob_data = get_blob_as_bytes(container_name=os.getenv('DATABASE'), blob_name=file_path)
         file_dir, file_name = os.path.split(file_path)
 
@@ -88,20 +106,64 @@ def download_scan_png(scan_metadata: ScanMetadata) -> None:
 
 def draw_bounding_boxes(annotation: str, scan_metadata: ScanMetadata) -> None:
     """
-    Load PNG file from the local filesystem, draw bounding boxes (defined in `scan_metadat` metadata) on it and save it
+    Load PNG file from the local filesystem, draw bounding boxes (defined in `scan_metadata` metadata) on it and save it
     back to the local filesystem.
     PNG file is loaded from the directory defined by the `PNG_DIR` environment variable.
     Destination directory where the files will be saved is defined by the `BBOXES_DIR` environment variable.
     """
-    raise NotImplementedError()
 
+    """
+    Using PIL for its power and ease to control
+    """
+    # if annotators found diagnosis in the same place
+    # threshold could be tweaked
+    def _is_rectangle_close(rect1, rect2, threshold=50):
+        x1, y1, w1, h1 = rect1
+        x2, y2, w2, h2 = rect2
+        return abs(x1 - x2) < threshold and abs(y1 - y2) < threshold
+
+
+    png_dir = os.getenv('PNG_DIR')
+    boxes_dir = os.getenv('BBOXES_DIR')
+
+    image = Image.open(os.path.join(png_dir, str(scan_metadata.id) + ".png"))
+    draw = ImageDraw.Draw(image)
+
+    font = ImageFont.truetype("arial.ttf", 20)
+
+    processed_rectangles = []
+
+    # fetching border values // drawing borders
+    for annotation_list in scan_metadata.annotation_bboxes:
+        for box_info in annotation_list:
+            # get comment if available else use annotation
+            comment = box_info.get('comment', annotation)
+            
+            # check if the comment contains diagnosis in dict
+            if comment and diagnoses_dict[annotation] in comment:
+                mark = box_info['mark']
+                x, y, width, height = mark['x'], mark['y'], mark['width'], mark['height']
+                rect = (x, y, x + width, y + height)
+                
+                # if any rect overlaps => overlapping = True
+                overlapping = any(_is_rectangle_close(rect, other_rect) for other_rect in processed_rectangles)
+                if not overlapping:
+                    draw.rectangle(rect, outline=255, width=2)
+                    draw.text((x, y - 25), comment, fill=255, stroke_width=2, stroke_fill='black', font=font)
+                    processed_rectangles.append(rect)
+                else:
+                    print(f"Overlapping rectangle in {scan_metadata.id} found!")
+    
+    output_folder = os.path.join(boxes_dir, annotation)
+    os.makedirs(output_folder, exist_ok=True) # folder named as annotation
+    output_file_path = os.path.join(output_folder, str(scan_metadata.id) + "_with_boxes.png")
+    image.save(output_file_path)
 
 def main(annotation: str) -> None:
     scans_metadata = get_scans_metadata_with_double_match(annotation)
-
     for scan_metadata in scans_metadata:
         download_scan_png(scan_metadata)
-        #draw_bounding_boxes(annotation, scan_metadata)
+        draw_bounding_boxes(annotation, scan_metadata)
 
 if __name__ == "__main__":
     # has_malign_mass
