@@ -36,19 +36,27 @@ def get_scans_metadata_with_double_match(annotation: str) -> list[ScanMetadata]:
     Hint: You can use the `run_db_statement` function from the `services.db` module to execute the SQL query.
     """
 
-    sql_query = """
-    SELECT id, mmg_scan_id, annotation_bboxes
-    FROM mmgscans_mmgscanannotation
-    WHERE mmg_scan_id IN (
-        SELECT mmg_scan_id
-        FROM mmgscans_mmgscanannotation
-        WHERE {annotation} = True
-        GROUP BY mmg_scan_id
-        HAVING COUNT(*) >= 2
-    );
-    """.format(annotation=annotation)
+    if not annotation:
+        raise ValueError("Annotation is not provided.")
 
-    results = run_db_statement(sql_query)
+    try: 
+        sql_query = """
+        SELECT id, mmg_scan_id, annotation_bboxes
+        FROM mmgscans_mmgscanannotation
+        WHERE mmg_scan_id IN (
+            SELECT mmg_scan_id
+            FROM mmgscans_mmgscanannotation
+            WHERE {annotation} = True
+            GROUP BY mmg_scan_id
+            HAVING COUNT(*) >= 2
+        );
+        """.format(annotation=annotation)
+
+        results = run_db_statement(sql_query)
+
+    except Exception as e:
+        raise ValueError(f"Error occurred while querying the database: {e}")
+
     unique_ids = set()
     scans_metadata = []
 
@@ -61,8 +69,9 @@ def get_scans_metadata_with_double_match(annotation: str) -> list[ScanMetadata]:
             annotations = []  # clear the list for each new mmg_scan_id
             scans_metadata.append(ScanMetadata(id=mmg_scan_id, annotation_bboxes=annotations))
         annotations.append(row[2])
-
+        
     return scans_metadata
+    
 
 def download_scan_png(scan_metadata: ScanMetadata) -> None:
     """
@@ -91,7 +100,6 @@ def download_scan_png(scan_metadata: ScanMetadata) -> None:
         raise ValueError("`PNG_DIR` environment variable is not set.")
     
     try:
-        # TODO: Network errors, missing files
         blob_data = get_blob_as_bytes(container_name=os.getenv('DATABASE'), blob_name=file_path)
         file_dir, file_name = os.path.split(file_path)
 
@@ -100,8 +108,13 @@ def download_scan_png(scan_metadata: ScanMetadata) -> None:
         with open(destination_path, 'wb') as file:
             file.write(blob_data)
         print(f"Scan downloaded to: {destination_path}")
-    except NameError as e:
-        print(e)
+
+    except FileNotFoundError as e:
+        print(f"File not found: {file_path}")
+        return
+
+    except Exception as e:
+        print(f"Error downloading scan {scan_id} from Azure Storage: {e}")
         return
 
 def draw_bounding_boxes(annotation: str, scan_metadata: ScanMetadata) -> None:
@@ -122,14 +135,20 @@ def draw_bounding_boxes(annotation: str, scan_metadata: ScanMetadata) -> None:
         x2, y2, w2, h2 = rect2
         return abs(x1 - x2) < threshold and abs(y1 - y2) < threshold
 
-
     png_dir = os.getenv('PNG_DIR')
+
     boxes_dir = os.getenv('BBOXES_DIR')
+    if not boxes_dir:
+        raise ValueError("`BBOXES_DIR` environment variable is not set.")
 
-    image = Image.open(os.path.join(png_dir, str(scan_metadata.id) + ".png"))
-    draw = ImageDraw.Draw(image)
-
-    font = ImageFont.truetype("arial.ttf", 20)
+    try:
+        image_path = (os.path.join(png_dir, str(scan_metadata.id) + ".png"))
+        image = Image.open(image_path)
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.truetype("arial.ttf", 20)
+    except FileNotFoundError:
+        print(f"Image file not found: {image_path}")
+        return
 
     processed_rectangles = []
 
@@ -155,9 +174,18 @@ def draw_bounding_boxes(annotation: str, scan_metadata: ScanMetadata) -> None:
                     print(f"Overlapping rectangle in {scan_metadata.id} found!")
     
     output_folder = os.path.join(boxes_dir, annotation)
-    os.makedirs(output_folder, exist_ok=True) # folder named as annotation
-    output_file_path = os.path.join(output_folder, str(scan_metadata.id) + "_with_boxes.png")
-    image.save(output_file_path)
+    
+    if not os.path.exists(output_folder):
+        try:
+            os.makedirs(output_folder)
+        except OSError as e:
+            print(f"Failed to create directory: {output_folder}")
+            return
+    try:
+        output_file_path = os.path.join(output_folder, str(scan_metadata.id) + "_with_boxes.png")
+        image.save(output_file_path)
+    except Exception as e:
+        print(f"Error occurred while saving the image: {e}")
 
 def main(annotation: str) -> None:
     scans_metadata = get_scans_metadata_with_double_match(annotation)
@@ -170,5 +198,5 @@ if __name__ == "__main__":
     # has_benign_mass
     # has_benign_microcalsifications
     # has_malign_microcalcifications
-    annotation_to_filter_by = "has_malign_mass"
+    annotation_to_filter_by = "has_benign_mass"
     main(annotation_to_filter_by)
