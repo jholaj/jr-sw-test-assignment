@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from services.db import run_db_statement
-from services.azure_storage import get_blob_as_bytes
+from src.services.db import run_db_statement
+from src.services.azure_storage import get_blob_as_bytes
 from azure.storage.blob import BlobServiceClient
 
 import os
@@ -41,7 +41,7 @@ def get_scans_metadata_with_double_match(annotation: str) -> list[ScanMetadata]:
 
     try: 
         sql_query = """
-        SELECT id, mmg_scan_id, annotation_bboxes
+        SELECT id, mmg_scan_id, annotation_bboxes,{annotation}
         FROM mmgscans_mmgscanannotation
         WHERE mmg_scan_id IN (
             SELECT mmg_scan_id
@@ -69,7 +69,6 @@ def get_scans_metadata_with_double_match(annotation: str) -> list[ScanMetadata]:
             annotations = []  # clear the list for each new mmg_scan_id
             scans_metadata.append(ScanMetadata(id=mmg_scan_id, annotation_bboxes=annotations))
         annotations.append(row[2])
-        
     return scans_metadata
     
 

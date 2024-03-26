@@ -108,3 +108,14 @@ All your test should be stored in tests directory.
 ## Note
 
 Please ensure that your solution follows best practices for security and data privacy, especially when dealing with credentials and patient data.
+
+## Launching in root folder
+Main script:
+    ```
+    python3 -m src.scan
+    ```
+
+Test:
+    ```
+    python3 -m tests.test_db/test_azure_storage
+    ```
