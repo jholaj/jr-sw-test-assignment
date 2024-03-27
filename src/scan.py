@@ -97,7 +97,10 @@ def download_scan_png(scan_metadata: ScanMetadata) -> None:
     png_dir = os.getenv("PNG_DIR")
     if not png_dir:
         raise ValueError("`PNG_DIR` environment variable is not set.")
-    
+    if not os.path.exists(png_dir):
+        print("Images directory created...")
+        os.makedirs(png_dir)
+
     try:
         blob_data = get_blob_as_bytes(container_name=os.getenv('DATABASE'), blob_name=file_path)
         file_dir, file_name = os.path.split(file_path)
@@ -139,6 +142,9 @@ def draw_bounding_boxes(annotation: str, scan_metadata: ScanMetadata) -> None:
     boxes_dir = os.getenv('BBOXES_DIR')
     if not boxes_dir:
         raise ValueError("`BBOXES_DIR` environment variable is not set.")
+    if not os.path.exists(boxes_dir):
+        print("Boxes dir created...")
+        os.makedirs(boxes_dir)
 
     try:
         image_path = (os.path.join(png_dir, str(scan_metadata.id) + ".png"))
